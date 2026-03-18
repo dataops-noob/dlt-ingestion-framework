@@ -1,0 +1,152 @@
+# Delta Live Tables Ingestion Configuration
+# Define source systems, tables, and ingestion parameters
+
+# Global settings
+global:
+  catalog: "data_platform"
+  schema_prefix: "bronze"
+  checkpoint_root: "/mnt/dlt/checkpoints"
+  audit_schema: "audit"
+  
+# Source systems configuration
+sources:
+  - name: "crm_system"
+    type: "jdbc"
+    connection:
+      host: "${CRM_DB_HOST}"
+      port: 5432
+      database: "crm_prod"
+      driver: "org.postgresql.Driver"
+    credentials:
+      username: "${CRM_DB_USER}"
+      password: "${CRM_DB_PASSWORD}"
+    tables:
+      - name: "customers"
+        source_table: "public.customers"
+        primary_key: "customer_id"
+        incremental_column: "updated_at"
+        load_type: "incremental"  # full, incremental, streaming
+        watermark_seconds: 300
+        
+      - name: "orders"
+        source_table: "public.orders"
+        primary_key: "order_id"
+        incremental_column: "created_at"
+        load_type: "incremental"
+        watermark_seconds: 300
+        
+      - name: "products"
+        source_table: "public.products"
+        primary_key: "product_id"
+        load_type: "full"
+        schedule: "0 2 * * *"  # Daily at 2 AM
+
+  - name: "salesforce"
+    type: "api"
+    connection:
+      base_url: "https://mycompany.salesforce.com"
+      api_version: "v58.0"
+    credentials:
+      client_id: "${SF_CLIENT_ID}"
+      client_secret: "${SF_CLIENT_SECRET}"
+      username: "${SF_USERNAME}"
+      password: "${SF_PASSWORD}"
+    tables:
+      - name: "opportunities"
+        source_object: "Opportunity"
+        primary_key: "Id"
+        incremental_column: "LastModifiedDate"
+        load_type: "incremental"
+        watermark_seconds: 600
+        
+      - name: "accounts"
+        source_object: "Account"
+        primary_key: "Id"
+        load_type: "full"
+        schedule: "0 1 * * *"
+
+  - name: "kafka_events"
+    type: "kafka"
+    connection:
+      bootstrap_servers: "${KAFKA_BOOTSTRAP_SERVERS}"
+      security_protocol: "SASL_SSL"
+    credentials:
+      sasl_mechanism: "PLAIN"
+      username: "${KAFKA_USERNAME}"
+      password: "${KAFKA_PASSWORD}"
+    tables:
+      - name: "user_events"
+        topic: "user.events"
+        load_type: "streaming"
+        format: "json"
+        schema_evolution: "true"
+        
+      - name: "transaction_events"
+        topic: "transactions"
+        load_type: "streaming"
+        format: "avro"
+        schema_registry_url: "${SCHEMA_REGISTRY_URL}"
+
+  - name: "azure_blob"
+    type: "cloud_storage"
+    connection:
+      storage_account: "${AZURE_STORAGE_ACCOUNT}"
+      container: "raw-data"
+    credentials:
+      client_id: "${AZURE_CLIENT_ID}"
+      client_secret: "${AZURE_CLIENT_SECRET}"
+      tenant_id: "${AZURE_TENANT_ID}"
+    tables:
+      - name: "csv_uploads"
+        path: "uploads/csv/"
+        format: "csv"
+        load_type: "incremental"
+        options:
+          header: "true"
+          inferSchema: "true"
+          delimiter: ","
+        file_pattern: "*.csv"
+        
+      - name: "json_files"
+        path: "uploads/json/"
+        format: "json"
+        load_type: "full"
+        schedule: "0 */6 * * *"
+        options:
+          multiLine: "true"
+
+# DLT Pipeline settings
+pipeline_settings:
+  target: "data_platform"
+  continuous: false
+  development: true
+  photon: true
+  clusters:
+    - label: "default"
+      num_workers: 2
+      node_type_id: "i3.xlarge"
+      autoscale:
+        min_workers: 1
+        max_workers: 4
+
+# Data quality rules
+data_quality:
+  enabled: true
+  quarantine_enabled: true
+  rules:
+    - name: "not_null"
+      condition: "{col} IS NOT NULL"
+      severity: "error"
+    - name: "positive_value"
+      condition: "{col} > 0"
+      severity: "warn"
+    - name: "valid_email"
+      condition: "{col} RLIKE '^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}$'"
+      severity: "error"
+
+# Monitoring and alerting
+monitoring:
+  enabled: true
+  notification_email: "data-team@company.com"
+  slack_webhook: "${SLACK_WEBHOOK_URL}"
+  metrics_retention_days: 90

@@ -1,0 +1,49 @@
+{
+  "id": "dlt-ingestion-pipeline",
+  "name": "DLT Ingestion Framework Pipeline",
+  "description": "Configuration-driven data ingestion pipeline with Delta Live Tables",
+  "target": "data_platform",
+  "continuous": false,
+  "development": true,
+  "photon": true,
+  "configuration": {
+    "pipelines.enableStreaming": "true",
+    "pipelines.streaming.trigger.interval": "1 minute",
+    "pipelines.trigger.interval": "1 hour"
+  },
+  "clusters": [
+    {
+      "label": "default",
+      "num_workers": 2,
+      "node_type_id": "i3.xlarge",
+      "autoscale": {
+        "min_workers": 1,
+        "max_workers": 4
+      }
+    }
+  ],
+  "libraries": [
+    {
+      "notebook": {
+        "path": "/Shared/dlt-ingestion-framework/src/pipelines/ingestion_pipeline.py"
+      }
+    },
+    {
+      "notebook": {
+        "path": "/Shared/dlt-ingestion-framework/src/pipelines/dlt_definitions.py"
+      }
+    }
+  ],
+  "notifications": [
+    {
+      "email": {
+        "recipients": ["data-team@company.com"]
+      },
+      "alerts": ["on-update-failure", "on-update-success"]
+    }
+  ],
+  "filters": {
+    "include": ["*"],
+    "exclude": []
+  }
+}
