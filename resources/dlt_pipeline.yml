@@ -1,0 +1,161 @@
+# DLT Pipeline Resource Definition
+# https://docs.databricks.com/aws/en/dev-tools/bundles/resources
+
+resources:
+  pipelines:
+    dlt_ingestion_pipeline:
+      name: dlt-ingestion-${var.environment}
+      target: ${var.catalog}.${var.schema_prefix}
+      
+      # DLT Configuration
+      development: ${bundle.target == "dev"}
+      continuous: false
+      photon: true
+      
+      # Cluster configuration
+      clusters:
+        - label: default
+          num_workers: 2
+          node_type_id: i3.xlarge
+          autoscale:
+            min_workers: 1
+            max_workers: 4
+          spark_conf:
+            spark.sql.adaptive.enabled: true
+            spark.sql.adaptive.coalescePartitions.enabled: true
+      
+      # Libraries - Python modules
+      libraries:
+        - notebook:
+            path: ../src/pipelines/dlt_definitions.py
+        - notebook:
+            path: ../src/pipelines/ingestion_pipeline.py
+      
+      # Configuration
+      configuration:
+        # Global settings
+        catalog: ${var.catalog}
+        schema_prefix: ${var.schema_prefix}
+        audit_schema: ${var.audit_schema}
+        checkpoint_root: /mnt/dlt/checkpoints/${var.environment}
+        
+        # Source configurations
+        crm_db_host: ${var.crm_db_host}
+        crm_db_user: ${var.crm_db_user}
+        crm_db_password: ${var.crm_db_password}
+        
+        kafka_bootstrap_servers: ${var.kafka_bootstrap_servers}
+        
+        azure_storage_account: ${var.azure_storage_account}
+        
+        # Pipeline metadata
+        pipeline.version: "1.0.0"
+        pipeline.environment: ${var.environment}
+      
+      # Notifications
+      notifications:
+        - email:
+            recipients:
+              - data-team@company.com
+          alerts:
+            - on-update-failure
+            - on-update-success
+            - on-flow-failure
+      
+      # Filters
+      filters:
+        include:
+          - "*"
+        exclude: []
+      
+      # Serverless option (if available)
+      serverless: false
+      
+      # Channel (PREVIEW or CURRENT)
+      channel: CURRENT
+
+  # Jobs for running the pipeline
+  jobs:
+    run_dlt_ingestion:
+      name: run-dlt-ingestion-${var.environment}
+      description: |
+        Job to run the DLT Ingestion Pipeline. 
+        Can be triggered manually or on a schedule.
+      
+      tasks:
+        - task_key: dlt_pipeline
+          pipeline_task:
+            pipeline_id: ${resources.pipelines.dlt_ingestion_pipeline.id}
+          
+          # Retry policy
+          max_retries: 2
+          min_retry_interval_millis: 60000
+          
+          # Timeout
+          timeout_seconds: 3600
+      
+      # Schedule (optional - can be triggered manually)
+      # schedule:
+      #   quartz_cron_expression: "0 0 2 * * ?"
+      #   timezone_id: America/New_York
+      #   pause_status: UNPAUSED
+      
+      # Email notifications
+      email_notifications:
+        on_start: []
+        on_success: []
+        on_failure:
+          - data-team@company.com
+      
+      # Webhook notifications (optional)
+      # webhook_notifications: {}
+      
+      # Permissions
+      permissions:
+        - user_name: ${workspace.current_user.userName}
+          level: IS_OWNER
+        - group_name: data-engineers
+          level: CAN_MANAGE_RUN
+      
+      # Tags
+      tags:
+        project: dlt-ingestion-framework
+        environment: ${var.environment}
+        team: data-platform
+
+  # Separate job for data quality checks
+  jobs:
+    data_quality_checks:
+      name: data-quality-checks-${var.environment}
+      description: |
+        Scheduled job to run data quality checks and generate reports.
+      
+      tasks:
+        - task_key: quality_report
+          notebook_task:
+            notebook_path: ${workspace.root_path}/notebooks/data_quality_report
+            base_parameters:
+              catalog: ${var.catalog}
+              audit_schema: ${var.audit_schema}
+              days_to_analyze: "7"
+          
+          new_cluster:
+            spark_version: 14.3.x-scala2.12
+            node_type_id: i3.xlarge
+            num_workers: 1
+            spark_conf:
+              spark.sql.adaptive.enabled: true
+      
+      schedule:
+        quartz_cron_expression: "0 0 8 * * ?"
+        timezone_id: America/New_York
+        pause_status: UNPAUSED
+      
+      email_notifications:
+        on_failure:
+          - data-team@company.com
+      
+      tags:
+        project: dlt-ingestion-framework
+        environment: ${var.environment}
+        type: data-quality

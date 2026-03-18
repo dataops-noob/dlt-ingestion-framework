@@ -1,0 +1,148 @@
+# Unity Catalog Schema Definitions
+# https://docs.databricks.com/aws/en/data-governance/unity-catalog/manage-schemas
+
+resources:
+  schemas:
+    # Bronze layer schema
+    bronze_schema:
+      catalog_name: ${var.catalog}
+      name: ${var.schema_prefix}
+      comment: |
+        Bronze layer schema for raw ingested data.
+        Contains tables from all configured sources.
+      properties:
+        layer: bronze
+        project: dlt-ingestion-framework
+        environment: ${var.environment}
+      
+      # Schema permissions
+      grants:
+        - principal: data-engineers
+          privileges:
+            - ALL_PRIVILEGES
+        - principal: data-analysts
+          privileges:
+            - USE_SCHEMA
+            - SELECT
+        - principal: dlt-pipeline-service-principal
+          privileges:
+            - ALL_PRIVILEGES
+    
+    # Audit schema
+    audit_schema:
+      catalog_name: ${var.catalog}
+      name: ${var.audit_schema}
+      comment: |
+        Audit schema for tracking ingestion runs, data quality checks,
+        schema evolution, and data lineage.
+      properties:
+        layer: audit
+        project: dlt-ingestion-framework
+        environment: ${var.environment}
+      
+      grants:
+        - principal: data-engineers
+          privileges:
+            - ALL_PRIVILEGES
+        - principal: data-analysts
+          privileges:
+            - USE_SCHEMA
+            - SELECT
+        - principal: dlt-pipeline-service-principal
+          privileges:
+            - ALL_PRIVILEGES
+    
+    # Silver layer schema (for cleaned/transformed data)
+    silver_schema:
+      catalog_name: ${var.catalog}
+      name: silver
+      comment: |
+        Silver layer schema for cleaned and enriched data.
+        Data quality rules applied, duplicates removed.
+      properties:
+        layer: silver
+        project: dlt-ingestion-framework
+        environment: ${var.environment}
+      
+      grants:
+        - principal: data-engineers
+          privileges:
+            - ALL_PRIVILEGES
+        - principal: data-analysts
+          privileges:
+            - USE_SCHEMA
+            - SELECT
+    
+    # Gold layer schema (for aggregated/reporting data)
+    gold_schema:
+      catalog_name: ${var.catalog}
+      name: gold
+      comment: |
+        Gold layer schema for business-ready aggregated data.
+        Optimized for reporting and analytics.
+      properties:
+        layer: gold
+        project: dlt-ingestion-framework
+        environment: ${var.environment}
+      
+      grants:
+        - principal: data-engineers
+          privileges:
+            - ALL_PRIVILEGES
+        - principal: data-analysts
+          privileges:
+            - USE_SCHEMA
+            - SELECT
+        - principal: business-users
+          privileges:
+            - USE_SCHEMA
+            - SELECT
+
+  # External locations (if using cloud storage)
+  external_locations:
+    raw_data_location:
+      name: raw-data-${var.environment}
+      url: abfss://raw-data@${var.azure_storage_account}.dfs.core.windows.net/
+      credential_name: raw-data-credential
+      comment: |
+        External location for raw data files from various sources.
+      
+      grants:
+        - principal: data-engineers
+          privileges:
+            - READ_FILES
+            - WRITE_FILES
+        - principal: dlt-pipeline-service-principal
+          privileges:
+            - READ_FILES
+            - WRITE_FILES
+    
+    checkpoint_location:
+      name: dlt-checkpoints-${var.environment}
+      url: abfss://checkpoints@${var.azure_storage_account}.dfs.core.windows.net/
+      credential_name: checkpoint-credential
+      comment: |
+        External location for DLT pipeline checkpoints.
+      
+      grants:
+        - principal: dlt-pipeline-service-principal
+          privileges:
+            - READ_FILES
+            - WRITE_FILES
+
+  # Volumes for file-based access
+  volumes:
+    raw_data_volume:
+      catalog_name: ${var.catalog}
+      schema_name: ${var.schema_prefix}
+      name: raw_data
+      volume_type: EXTERNAL
+      storage_location: abfss://raw-data@${var.azure_storage_account}.dfs.core.windows.net/
+      comment: |
+        External volume for raw data file access.
+      
+      grants:
+        - principal: data-engineers
+          privileges:
+            - READ_VOLUME
+            - WRITE_VOLUME

@@ -17,9 +17,13 @@ A configuration-driven data ingestion framework built on Delta Live Tables (DLT)
 
 ```
 dlt-ingestion-framework/
+├── databricks.yml              # Databricks Asset Bundle configuration
 ├── config/
 │   ├── pipeline_config.yaml    # Main configuration file
 │   └── dlt_pipeline.json       # DLT pipeline definition
+├── resources/
+│   ├── dlt_pipeline.yml        # DLT pipeline resource definition
+│   └── schemas.yml             # Unity Catalog schema definitions
 ├── src/
 │   ├── pipelines/
 │   │   ├── ingestion_pipeline.py   # Core ingestion logic
@@ -33,12 +37,53 @@ dlt-ingestion-framework/
 │   └── test_ingestion_framework.py # Unit tests
 ├── scripts/
 │   └── deploy.sh                   # Deployment script
+├── .github/
+│   └── workflows/
+│       └── databricks-bundle-cicd.yml  # GitHub Actions CI/CD
 └── README.md
 ```
 
 ## Quick Start
 
-### 1. Configuration
+### Option 1: Databricks Asset Bundles (Recommended)
+
+Databricks Asset Bundles (DAB) provide a declarative way to define and deploy your DLT pipelines.
+
+#### 1. Install Databricks CLI
+
+```bash
+pip install databricks-cli
+```
+
+#### 2. Configure Databricks CLI
+
+```bash
+databricks configure
+# Enter your Databricks host and personal access token
+```
+
+#### 3. Initialize Bundle
+
+```bash
+cd dlt-ingestion-framework
+databricks bundle validate
+```
+
+#### 4. Deploy to Dev
+
+```bash
+databricks bundle deploy -t dev
+```
+
+#### 5. Run Pipeline
+
+```bash
+databricks bundle run -t dev run_dlt_ingestion
+```
+
+### Option 2: Manual Deployment
+
+#### 1. Configuration
 
 Edit `config/pipeline_config.yaml` to define your sources:
 
@@ -90,6 +135,49 @@ Start the pipeline from the Databricks Delta Live Tables UI or via API:
 ```bash
 databricks pipelines start <pipeline-id>
 ```
+
+## Databricks Asset Bundles (DAB)
+
+This project uses Databricks Asset Bundles for infrastructure-as-code deployment. The bundle configuration is defined in `databricks.yml`.
+
+### Bundle Structure
+
+- **databricks.yml**: Root bundle configuration with variables and targets
+- **resources/dlt_pipeline.yml**: DLT pipeline and job definitions
+- **resources/schemas.yml**: Unity Catalog schema and permissions
+
+### Bundle Commands
+
+```bash
+# Validate bundle configuration
+databricks bundle validate
+
+# Deploy to specific target
+databricks bundle deploy -t dev
+databricks bundle deploy -t staging
+databricks bundle deploy -t prod
+
+# Run jobs
+databricks bundle run -t dev run_dlt_ingestion
+databricks bundle run -t dev data_quality_checks
+
+# Destroy resources
+databricks bundle destroy -t dev --auto-approve
+```
+
+### CI/CD with GitHub Actions
+
+The project includes a GitHub Actions workflow (`.github/workflows/databricks-bundle-cicd.yml`) that:
+
+1. Validates the bundle on every PR
+2. Deploys to dev on pushes to `develop` branch
+3. Deploys to staging on pushes to `main` branch
+4. Deploys to production after staging approval
+
+Required GitHub Secrets:
+- `DATABRICKS_HOST`: Your Databricks workspace URL
+- `DATABRICKS_TOKEN`: Databricks personal access token
+- `SLACK_WEBHOOK_URL` (optional): For deployment notifications
 
 ## Configuration Reference
 
