@@ -140,6 +140,109 @@ databricks pipelines start <pipeline-id>
 
 This project uses Databricks Asset Bundles for infrastructure-as-code deployment. The bundle configuration is defined in `databricks.yml`.
 
+### Quick Configuration Examples
+
+#### Example 1: Adding a New PostgreSQL Table with Full Load
+
+```yaml
+sources:
+  - name: "analytics_db"
+    type: "jdbc"
+    connection:
+      host: "${ANALYTICS_DB_HOST}"
+      port: 5432
+      database: "analytics"
+      driver: "org.postgresql.Driver"
+    credentials:
+      username: "${ANALYTICS_DB_USER}"
+      password: "${ANALYTICS_DB_PASSWORD}"
+    tables:
+      - name: "daily_metrics"
+        source_table: "public.metrics"
+        primary_key: "metric_id"
+        load_type: "full"                    # Full refresh every time
+        schedule: "0 1 * * *"                # Run daily at 1 AM
+        scd_type: "scd1"                     # Overwrite with latest data
+```
+
+#### Example 2: Adding Incremental Table with Watermark
+
+```yaml
+tables:
+  - name: "transactions"
+    source_table: "public.transactions"
+    primary_key: "transaction_id"
+    incremental_column: "last_modified"      # Column used for change detection
+    load_type: "incremental"
+    watermark_seconds: 300                   # 5-minute buffer for late-arriving data
+    scd_type: "append"                       # Transactions are immutable
+```
+
+#### Example 3: Adding Kafka Streaming Source
+
+```yaml
+sources:
+  - name: "event_stream"
+    type: "kafka"
+    connection:
+      bootstrap_servers: "${KAFKA_BOOTSTRAP}"
+      security_protocol: "SASL_SSL"
+    credentials:
+      username: "${KAFKA_USER}"
+      password: "${KAFKA_PASSWORD}"
+    tables:
+      - name: "user_clicks"
+        topic: "user.clicks"
+        load_type: "streaming"
+        format: "json"
+        primary_key: "event_id"
+        scd_type: "append"
+```
+
+#### Example 4: Adding CSV Files from Azure Blob
+
+```yaml
+sources:
+  - name: "azure_files"
+    type: "cloud_storage"
+    connection:
+      storage_account: "${AZURE_STORAGE_ACCOUNT}"
+      container: "data-uploads"
+    credentials:
+      client_id: "${AZURE_CLIENT_ID}"
+      client_secret: "${AZURE_CLIENT_SECRET}"
+      tenant_id: "${AZURE_TENANT_ID}"
+    tables:
+      - name: "sales_data"
+        path: "sales/"
+        format: "csv"
+        file_pattern: "*.csv"
+        load_type: "incremental"
+        options:
+          header: "true"
+          delimiter: ","
+          inferSchema: "true"
+        primary_key: "transaction_id"
+```
+
+#### Example 5: SCD Type 2 with Customer History
+
+```yaml
+tables:
+  - name: "customer_master"
+    source_table: "public.customers"
+    primary_key: "customer_id"
+    incremental_column: "updated_at"
+    load_type: "incremental"
+    scd_type: "scd2"
+    scd_columns: ["first_name", "last_name", "email", "phone", "address"]
+```
+
+This creates:
+- `silver_crm_system_customer_master` - Full history table
+- `silver_crm_system_customer_master_current` - View of active records only
+- `silver_crm_system_customer_master_history` - View of all historical changes
+
 ### Bundle Structure
 
 - **databricks.yml**: Root bundle configuration with variables and targets
@@ -178,6 +281,93 @@ Required GitHub Secrets:
 - `DATABRICKS_HOST`: Your Databricks workspace URL
 - `DATABRICKS_TOKEN`: Databricks personal access token
 - `SLACK_WEBHOOK_URL` (optional): For deployment notifications
+
+## Configuring New Tables and Sources
+
+This section provides a comprehensive guide on how to configure new data sources and tables using the YAML configuration file.
+
+### Step 1: Understanding the Configuration File
+
+The main configuration file is `config/pipeline_config.yaml`. It has three main sections:
+
+1. **Global settings** - Catalog, schema prefixes, checkpoint locations
+2. **Sources** - One entry per source system with connection details and table definitions
+3. **Pipeline settings** - DLT pipeline configuration, data quality rules, monitoring
+
+### Step 2: Adding a New Data Source
+
+To add a completely new source system (e.g., a new database or API), add a new entry under the `sources` list:
+
+```yaml
+sources:
+  # EXISTING SOURCE
+  - name: "crm_system"
+    type: "jdbc"
+    ...
+  
+  # NEW SOURCE - Add this block
+  - name: "erp_system"           # Unique name for this source
+    type: "jdbc"                  # Source type: jdbc, kafka, api, cloud_storage
+    connection:
+      host: "${ERP_DB_HOST}"      # Use env vars for sensitive data
+      port: 1433
+      database: "erp_prod"
+      driver: "com.microsoft.sqlserver.jdbc.SQLServerDriver"
+    credentials:
+      username: "${ERP_DB_USER}"
+      password: "${ERP_DB_PASSWORD}"
+    tables:
+      # Define tables from this source below
+```
+
+### Step 3: Adding Tables to an Existing Source
+
+To add a new table from an existing source, simply add a new entry under the `tables` list:
+
+```yaml
+sources:
+  - name: "crm_system"
+    type: "jdbc"
+    connection:
+      host: "${CRM_DB_HOST}"
+      port: 5432
+      database: "crm_prod"
+    credentials:
+      username: "${CRM_DB_USER}"
+      password: "${CRM_DB_PASSWORD}"
+    tables:
+      # EXISTING TABLES
+      - name: "customers"
+        source_table: "public.customers"
+        primary_key: "customer_id"
+        incremental_column: "updated_at"
+        load_type: "incremental"
+      
+      # NEW TABLE - Add this block
+      - name: "products"            # Table name in the pipeline
+        source_table: "public.products"  # Actual table name in source DB
+        primary_key: "product_id"    # Required: unique identifier
+        load_type: "full"             # Options: full, incremental, streaming
+        schedule: "0 2 * * *"       # Cron expression for scheduling
+```
+
+### Step 4: Deploying the Changes
+
+After updating the configuration:
+
+```bash
+# Using Databricks Asset Bundles (recommended)
+databricks bundle deploy -t dev
+
+# Or using the deployment script
+./scripts/deploy.sh dev
+```
+
+The framework automatically:
+- Creates bronze tables for new sources/tables
+- Sets up SCD transformations (if configured)
+- Configures data quality checks
+- Updates the DLT pipeline
 
 ## Configuration Reference
 
@@ -229,9 +419,59 @@ tables:
 
 ### Load Types
 
-- **full**: Complete table refresh on each run
-- **incremental**: Only new/changed records based on watermark column
-- **streaming**: Continuous ingestion from streaming sources
+- **full**: Complete table refresh on each run - all data is reloaded
+- **incremental**: Only new/changed records based on watermark column - efficient for large tables
+- **streaming**: Continuous ingestion from streaming sources like Kafka
+
+### SCD (Slowly Changing Dimensions) Types
+
+The framework supports multiple SCD patterns for tracking data changes over time:
+
+| SCD Type | Description | When to Use |
+|----------|-------------|-------------|
+| **append** | Insert only, no updates | Immutable data like events, logs, transactions |
+| **scd1** | Overwrite with latest values | No history needed (e.g., product prices, status) |
+| **scd2** | Full history tracking | Need complete change history (e.g., customer addresses, employee roles) |
+| **scd3** | Partial history | Keep only previous value (e.g., previous manager) |
+| **upsert** | Merge/update records | Standard merge pattern |
+
+#### SCD Type 2 Configuration (Full History)
+
+```yaml
+tables:
+  - name: "customers"
+    source_table: "public.customers"
+    primary_key: "customer_id"
+    load_type: "incremental"
+    scd_type: "scd2"                           # Enable SCD Type 2
+    scd_columns: ["email", "phone", "address"]   # Columns to track changes on
+```
+
+With SCD Type 2, the framework automatically:
+- Creates `silver_{source}_{table}` table with full history
+- Creates `{table}_current` view showing only active records
+- Creates `{table}_history` view showing all historical records
+- Manages `_scd_effective_date`, `_scd_end_date`, `_scd_is_current` columns
+
+### Table Configuration Options
+
+| Option | Required | Description | Example |
+|--------|----------|-------------|---------|
+| `name` | Yes | Pipeline table name | `"customers"` |
+| `source_table` | Yes* | Source system table name | `"public.customers"` |
+| `source_object` | Yes* | API object name (for APIs) | `"Account"` |
+| `topic` | Yes* | Kafka topic name | `"user.events"` |
+| `path` | Yes* | Cloud storage path | `"uploads/csv/"` |
+| `primary_key` | Yes | Unique identifier column | `"customer_id"` |
+| `incremental_column` | For incremental | Column for change detection | `"updated_at"` |
+| `load_type` | Yes | `full`, `incremental`, `streaming` | `"incremental"` |
+| `scd_type` | No | `append`, `scd1`, `scd2`, `scd3`, `upsert` | `"scd2"` |
+| `scd_columns` | For SCD2 | Columns to track for changes | `["email", "phone"]` |
+| `schedule` | For full loads | Cron expression | `"0 2 * * *"` |
+| `watermark_seconds` | For incremental | Safety buffer | `300` |
+| `format` | For files | File format | `"csv"`, `"json"`, `"parquet"` |
+
+*Only one of these is required depending on source type
 
 ### Data Quality Rules
 
