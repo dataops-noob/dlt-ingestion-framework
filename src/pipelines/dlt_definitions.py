@@ -207,67 +207,33 @@ for source in config.get('sources', []):
 
 
 # =============================================================================
-# SILVER LAYER TABLES (Example)
+# SILVER LAYER TABLES WITH SCD SUPPORT
 # =============================================================================
 
-@dlt.table(
-    name="silver_customers",
-    comment="Cleaned and enriched customer data",
-    table_properties={
-        "quality": "silver",
-        "pipelines.autoOptimize.managed": "true"
-    }
-)
-@dlt.expect("valid_email", "email IS NOT NULL AND email RLIKE '^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\\\.[A-Za-z]{2,}$'")
-def silver_customers():
-    """
-    Silver layer transformation for customer data.
-    Cleans and standardizes data from bronze layer.
-    """
-    return dlt.read("bronze_crm_system_customers") \
-        .select(
-            col("customer_id"),
-            trim(col("first_name")).alias("first_name"),
-            trim(col("last_name")).alias("last_name"),
-            lower(trim(col("email"))).alias("email"),
-            col("phone"),
-            col("created_at"),
-            col("updated_at"),
-            col("_ingestion_timestamp"),
-            col("_batch_id")
-        ) \
-        .dropDuplicates(["customer_id"])
+from src.pipelines.scd_handler import SCDHandler, create_scd_table_definition, create_scd_current_view, create_scd_history_view
 
-
-@dlt.table(
-    name="silver_orders",
-    comment="Cleaned and enriched order data",
-    table_properties={
-        "quality": "silver",
-        "pipelines.autoOptimize.managed": "true"
-    }
-)
-@dlt.expect("positive_amount", "order_amount > 0")
-def silver_orders():
-    """
-    Silver layer transformation for order data.
-    """
-    return dlt.read("bronze_crm_system_orders") \
-        .select(
-            col("order_id"),
-            col("customer_id"),
-            col("order_date"),
-            col("order_amount").cast("decimal(18,2)").alias("order_amount"),
-            col("status"),
-            col("created_at"),
-            col("_ingestion_timestamp"),
-            col("_batch_id")
-        ) \
-        .dropDuplicates(["order_id"])
+# Generate Silver tables with SCD support for all configured tables
+for source in config.get('sources', []):
+    source_name = source['name']
+    
+    for table in source.get('tables', []):
+        table_config = {**source, **table}
+        table_config['source_name'] = source_name
+        
+        scd_type = table.get('scd_type', 'append')
+        
+        if scd_type:
+            # Create SCD-enabled silver table
+            create_scd_table_definition(source_name, table_config)
+            
+            # Create views for SCD Type 2
+            if scd_type.upper() == 'SCD2':
+                create_scd_current_view(source_name, table_config)
+                create_scd_history_view(source_name, table_config)
 
 
 # =============================================================================
-# GOLD LAYER TABLES (Example)
+# GOLD LAYER TABLES (Example Aggregations)
 # =============================================================================
 
 @dlt.table(
@@ -282,8 +248,9 @@ def gold_customer_orders_summary():
     """
     Gold layer: Customer order summary metrics.
     """
-    customers_df = dlt.read("silver_customers")
-    orders_df = dlt.read("silver_orders")
+    # Read from current view for SCD Type 2 support
+    customers_df = dlt.read("silver_crm_system_customers_current") if dlt.is_table("silver_crm_system_customers_current") else dlt.read("silver_crm_system_customers")
+    orders_df = dlt.read("silver_crm_system_orders")
     
     return customers_df.join(
         orders_df,
@@ -314,7 +281,7 @@ def gold_daily_order_metrics():
     """
     Gold layer: Daily aggregated order metrics.
     """
-    return dlt.read("silver_orders") \
+    return dlt.read("silver_crm_system_orders") \
         .groupBy(
             date_trunc("day", col("order_date")).alias("order_day")
         ).agg(

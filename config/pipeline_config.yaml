@@ -27,6 +27,9 @@ sources:
         incremental_column: "updated_at"
         load_type: "incremental"  # full, incremental, streaming
         watermark_seconds: 300
+        # SCD Type 2: Track full history of customer changes
+        scd_type: "scd2"
+        scd_columns: ["first_name", "last_name", "email", "phone", "address"]
         
       - name: "orders"
         source_table: "public.orders"
@@ -34,12 +37,16 @@ sources:
         incremental_column: "created_at"
         load_type: "incremental"
         watermark_seconds: 300
+        # APPEND: Orders are immutable, only insert new records
+        scd_type: "append"
         
       - name: "products"
         source_table: "public.products"
         primary_key: "product_id"
         load_type: "full"
         schedule: "0 2 * * *"  # Daily at 2 AM
+        # SCD Type 1: Always keep latest product info, no history
+        scd_type: "scd1"
 
   - name: "salesforce"
     type: "api"
